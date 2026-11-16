@@ -49,86 +49,107 @@ On the main display, the large collective creature is the main focus, with the s
 ## Steps
 <!-- Written by the agent. Each step small enough to check on your phone. -->
 
-**Step 1 — Deploy the Share worker and set the host URL.**
-Clone the p5-phone repository into a temporary folder outside this project, open `companion/P5PhoneShare`, run `npm install`, then `npx wrangler login` (finish the login in your browser) and `npx wrangler deploy`. Copy the printed `https://*.workers.dev` address into the tunables at the top of `sketch.js` as `SHARE_HOST`, along with `ROOM` and `APP_NAME`. This is the one step that works outside the project folder; the project itself still changes only `sketch.js`. The worker stays up without your laptop.
+**Step 1 — Confirm the Cloudflare account and get the worker code.**
+Confirm you have a free Cloudflare account (or create one). Clone the p5-phone repository into a temporary folder outside this project, open `companion/P5PhoneShare`, and run `npm install`. If `git` is not available, download the repository zip instead. This step changes nothing in the project.
+Check: the `companion/P5PhoneShare` folder exists and its dependencies are installed. No phone check yet.
+
+**Step 2 — Deploy the worker and set the host URL.**
+In `companion/P5PhoneShare`, run `npx wrangler login` (finish the login in your browser) and `npx wrangler deploy`. Copy the printed `https://*.workers.dev` address into the tunables at the top of `sketch.js` as `SHARE_HOST`, along with `ROOM` and `APP_NAME`. The worker stays up without your laptop.
 Check: the worker address responds in a browser. No phone check yet.
 
-**Step 2 — Black canvas, gesture lock, responsive frame.**
-In `setup()`, create a full-window canvas, paint it black, and call `lockGestures()`. Draw a plain placeholder circle centred at `width/2, height/2` with radius `min(width, height) * CREATURE_SCALE`. In `windowResized()`, resize the canvas and recentre the drawing.
-Functions: `createCanvas(windowWidth, windowHeight)`, `background(0)`, `lockGestures()`, `windowResized()`.
+**Step 3 — Black canvas, gesture lock, responsive frame.**
+In `setup()`, create a full-window canvas with `pixelDensity(1)`, paint it black, and call `lockGestures()`. Draw a plain placeholder circle centred at `width/2, height/2` with radius `min(width, height) * CREATURE_SCALE`. In `windowResized()`, resize the canvas and recentre the drawing.
+Functions: `createCanvas(windowWidth, windowHeight)`, `pixelDensity(1)`, `background(0)`, `lockGestures()`, `windowResized()`.
 Numbers: `CREATURE_SCALE`.
 Check laptop: a black page with a grey circle in the middle. Check phone: the same, centred, with no scrolling or pinch-zoom, and it stays centred when you rotate the phone.
 
-**Step 3 — One permission tap for motion and Share; keep the screen on.**
-In `setup()`, call `shareSetup({ host: SHARE_HOST, room: ROOM, app: APP_NAME, shared: {...}, me: {...} })`, then a single combined `enablePermissionsTap(['gyro', 'share'], 'Tap to enable motion and join the room')`. Call `keepScreenOn()` from `mouseReleased()`. Call `angleMode(DEGREES)`. Gate every hardware read behind `window.sensorsEnabled` and `window.shareConnected`.
+**Step 4 — One permission tap for motion and Share; keep the screen on.**
+In `setup()`, call `shareSetup({ host: SHARE_HOST, room: ROOM, app: APP_NAME, shared: {...}, me: {...} })`, then a single combined `enablePermissionsTap(['gyro', 'share'], 'Tap to enable motion and join the room')`. Call `keepScreenOn()` from `mouseReleased()`. Call `angleMode(DEGREES)`. Gate every hardware read behind `window.sensorsEnabled` and `window.shareConnected`. The iPad host gets this tap too; it does not need gyro, but the same file asks for it, so set up and tap the iPad before it is mounted in the sculpture.
 Functions: `shareSetup()`, `enablePermissionsTap()`, `keepScreenOn()`, `angleMode(DEGREES)`, `mouseReleased()`.
 Check phone: tap once; the motion permission and the room join both happen; the screen stays on; `shareStatus` shows connected. Check laptop: the tap works and the room joins; the rotation values stay 0 because there is no sensor.
 
-**Step 4 — Creature body: a soft blob that breathes.**
-Replace the placeholder with a closed blob of `BODY_POINTS` points around the centre, each radius perturbed by `noise()`. Draw it with layered translucent fills and a soft glow (concentric translucent shapes or a radial gradient). Give it a slow idle pulse and drift using `noise()` and `frameCount` at `IDLE_SPEED`.
+**Step 5 — Creature body: a soft blob that breathes.**
+Replace the placeholder with a closed blob of `BODY_POINTS` points around the centre, each radius perturbed by `noise()`. Draw it with layered translucent fills and a soft glow (concentric translucent shapes). Give it a slow idle pulse and drift using `noise()` and `frameCount` at `IDLE_SPEED`.
 Functions: `beginShape()` / `endShape(CLOSE)` or `splineVertex()`, `noise()`, `frameCount`, `fill()` / `noStroke()`.
 Numbers: `BODY_POINTS`, `IDLE_SPEED`.
 Check laptop: a soft organic blob breathes slowly in the middle of the black page. Check phone: the same, centred and always in frame.
 
-**Step 5 — Touch reaction: wobble, stretch and deform around the touch.**
-On `mousePressed()` and `mouseDragged()`, find the body points nearest the pointer and push or pull them away from it; add a wobble that decays back at `SETTLE_SPEED`. Use `touches[]` so more than one finger works. `mouseReleased()` ends the press.
+**Step 6 — Touch reaction: wobble, stretch and deform around the touch.**
+On `mousePressed()` and `mouseDragged()`, find the body points nearest the pointer and push or pull them away from it; add a wobble that decays back at `SETTLE_SPEED`. Use `touches[]` and test `touches.length > 0` for "a finger is down" (because `mouseIsPressed` goes false when any one finger lifts). `mouseReleased()` ends the press. Return `false` from all three mouse callbacks so p5-phone keeps managing gestures.
 Functions: `mousePressed()`, `mouseDragged()`, `mouseReleased()`, `touches[]`, `mouseX` / `mouseY`.
 Numbers: `REACTION_STRENGTH`, `SETTLE_SPEED`.
 Check laptop: click and drag the blob; it dents and wobbles, then settles back. Check phone: the same with a finger.
 
-**Step 6 — Drag reshape: pull outward and keep a little of it.**
-While dragging, pull the body outward. If a drag is long or strong, add a small permanent amount to the shape trait (lobes or asymmetry) at `GROWTH_RATE`; the temporary dent still settles.
+**Step 7 — Drag reshape: pull outward and keep a little of it.**
+While dragging, pull the body outward. If a drag is long or strong, add a small permanent amount to the shape trait (lobes or asymmetry) at `GROWTH_RATE`; the temporary dent still settles. Return `false` from `mouseDragged()`.
 Functions: `mouseDragged()`, `dist()`.
 Numbers: `GROWTH_RATE`.
 Check laptop: drag outward and let go; the creature bulges and keeps a little of the new shape. Check phone: the same.
 
-**Step 7 — Tilt: movement and slow shape change.**
+**Step 8 — Tilt: movement and slow shape change.**
 When `window.sensorsEnabled`, read `rotationX` and `rotationY` in degrees and map them to a drift velocity and a slow change in asymmetry. Tilt also nudges the idle movement.
 Functions: `rotationX`, `rotationY`, `map()`, `constrain()`.
 Numbers: `TILT_FORCE`, `TILT_GROWTH`.
-Check phone: tilt the phone; the creature leans and drifts, and its silhouette becomes more asymmetrical over time. Check laptop: no sensor yet; the keyboard fallback comes in step 14.
+Check phone: tilt the phone; the creature leans and drifts, and its silhouette becomes more asymmetrical over time. Check laptop: no sensor yet; the keyboard fallback comes in step 17.
 
-**Step 8 — Shake: colour, glow and complexity burst.**
+**Step 9 — Shake: colour, glow and complexity burst.**
 Define `deviceShaken()` and set a threshold with `setShakeThreshold()`. On a shake, add to the colour, glow and complexity growth and show a visible burst that decays.
 Functions: `deviceShaken()`, `setShakeThreshold()`.
 Numbers: `SHAKE_THRESHOLD`, `SHAKE_GROWTH`.
-Check phone: shake the phone; the creature brightens and its colour shifts. Check laptop: a key or button in step 14.
+Check phone: shake the phone; the creature brightens and its colour shifts. Check laptop: a key or button in step 17.
 
-**Step 9 — Permanent growth, saved on the phone.**
-Accumulate the permanent traits from touches, drags, tilts and shakes at `GROWTH_RATE`. Save the creature state to `localStorage`, throttled to `SAVE_INTERVAL`, and load it in `setup()` before the first draw. There is no reset.
+**Step 10 — Permanent growth, saved on the phone.**
+Accumulate the permanent traits from touches, drags, tilts and shakes at `GROWTH_RATE`. Save the creature state to `localStorage`, throttled to `SAVE_INTERVAL`, and load it in `setup()` before the first draw. There is no reset. This saved state must be extended again when features are added in step 12.
 Functions: `localStorage.getItem()` / `localStorage.setItem()`, `JSON.stringify()` / `JSON.parse()`.
 Numbers: `SAVE_INTERVAL`.
 Check phone: interact, then refresh the page; the creature is still bigger or more complex. Close and reopen it later; it is still there. Check laptop: the same in the browser.
 
-**Step 10 — A randomized colour palette that keeps drifting.**
-On the first run, generate a randomized palette (a hue base and range) that stays vibrant, and save it with the creature. Drift hue and brightness slowly at `DRIFT_SPEED` so the colours pulse and flow into one another.
+**Step 11 — A randomized colour palette that keeps drifting.**
+On the first run, generate a randomized palette (a hue base and range) that stays vibrant, and save it with the creature. Drift hue and brightness slowly at `DRIFT_SPEED` so the colours pulse and flow into one another. Keep the palette in HSB so the host can average hue later.
 Functions: `colorMode(HSB)`, `hue()` / `saturation()` / `brightness()`, `noise()`, `lerp()`.
 Numbers: `DRIFT_SPEED`, `HUE_RANGE`.
 Check phone: two phones show different palettes; over about a minute the colours shift smoothly and never turn jarring. Check laptop: the same.
 
-**Step 11 — Structural features: tendrils, pearls and membranes.**
-Grow three feature types from interactions — tubular tendrils and extensions, pearl-like clustered growths, and translucent layered membranes — attached at positions on the body, in patches. Different interactions grow different features, and they coexist. Draw them with 2D curves, circles and translucent layers so they read as part of the creature's structure, not a pattern laid on top.
-Functions: `bezier()` / `spline()`, `circle()` / `ellipse()`, translucent fills.
-Numbers: `FEATURE_GROWTH`, `MAX_FEATURES`, `TENDRIL_LENGTH`, `PEARL_SIZE`, `MEMBRANE_LAYERS`.
-Check laptop: drag repeatedly to grow tendrils, tap to grow pearls, shake to grow membranes; one creature ends up with a unique combination. Check phone: the same with touch, drag and shake.
+**Step 12 — Feature framework and tendrils.**
+Add a feature list to the creature. Each feature has a type, an attachment point (a body-point index so it follows the deforming body), and a growth value. Start with tubular tendrils and extensions. Grow them from dragging, and draw them with 2D curves. Extend the saved state from step 10 to include the feature list, and save again.
+Functions: `splineVertex()` / `spline()` or `bezier()`, feature objects, `localStorage`.
+Numbers: `FEATURE_GROWTH`, `MAX_FEATURES`, `TENDRIL_LENGTH`.
+Check laptop: drag repeatedly; tendrils grow out of the body. Check phone: the same, and a refresh keeps them.
 
-**Step 12 — Share: send the creature and detect the host.**
-Write the creature's traits into `me` (assign `me.traits = {...}` or use `shareSetMe()`). The host is whichever device has `shareIsHost`; the iPad must join first. Participants send their traits, and the host reads everyone's `me` from `guests`. Keep every device non-quiet so the host can read the guests.
+**Step 13 — Pearl clusters and membranes.**
+Add the other two feature types: pearl-like clustered growths (grown by tapping) and translucent layered membranes (grown by shaking). They coexist with tendrils and with each other, in patches. Draw them with circles and translucent layers so they read as structure, not a pattern laid on top.
+Functions: `circle()` / `ellipse()`, translucent fills, the feature list from step 12.
+Numbers: `PEARL_SIZE`, `MEMBRANE_LAYERS`.
+Check laptop: drag to grow tendrils, tap to grow pearls, shake to grow membranes; one creature ends up with a unique combination. Check phone: the same with touch, drag and shake.
+
+**Step 14 — Share: send the whole creature and detect the host.**
+Send a compact snapshot of the whole creature in `me`: the permanent traits, the palette, and the feature list as a flat array of numbers (type, body-point index, growth). Keep the payload small; `shareSetup` already batches changes at `SEND_INTERVAL`, so only send when something changed. The host is whichever device has `shareIsHost`; the iPad must join first. Participants send their snapshot, and the host reads everyone's `me` from `guests`. Keep every device non-quiet so the host can read the guests.
 Functions: `shareSetup()`, `me`, `shareSetMe()`, `shareIsHost`, `guests`, `shareConnected`, `shareJoined()` / `shareLeft()`.
 Numbers: `SEND_INTERVAL` (the `sendInterval` in `shareSetup`).
 Check phone: two phones join the same room; the first one becomes host and sees both guests; the second still sees only its own creature. Check laptop: the same in a browser.
 
-**Step 13 — Host view: the averaged collective creature plus satellites.**
-On the host, average the traits across `guests` plus your own `me`, write the average to `shared.avg` with `shareSet()`, and draw the big averaged creature at the centre with a small satellite creature for each guest arranged around it. Recompute the average as guests join and leave, and handle the host role passing to another device.
-Functions: `shareIsHost`, `guests`, `shareGuest()`, `shared`, `shareSet()`, `shareHostChanged()`.
-Numbers: `BIG_SCALE`, `SATELLITE_SCALE`, `MAX_SATELLITES`.
-Check iPad: the big creature changes as the phones interact; one satellite appears per person and shows that person's own features. Check laptop: a second browser window can act as a participant.
+**Step 15 — Host view: average and draw the big creature.**
+On the host, average the permanent traits across `guests` (and the host's own `me` if it has one). Average size, complexity and glow linearly; average hue circularly so 350° and 10° blend to 0°, not 180°. Draw the big averaged creature at the centre. Show an empty state before anyone joins.
+Functions: `shareIsHost`, `guests`, `shareGuest()`, drawing functions.
+Numbers: `BIG_SCALE`.
+Check iPad: the big creature changes as the phones interact; before anyone joins it shows a resting state. Check laptop: a second browser window can act as a participant.
 
-**Step 14 — Laptop fallback and installation polish.**
-Add keyboard keys and on-screen buttons that stand in for tilt and shake on devices without sensors, gated on `window.sensorsEnabled`. Make sure the iPad handles portrait and landscape, the host view has no clutter, and the glow reads in a dim room. Confirm the screen stays on during a session.
-Functions: `keyPressed()` / `keyIsDown()`, `createButton()` or buttons drawn on the canvas, `windowResized()`.
+**Step 16 — Host satellites and handover.**
+Draw a small satellite creature for each guest around the big creature, using that guest's own snapshot from `guests` so the satellites show each person's actual features. Arrange them around the centre and keep the layout uncluttered. Recompute when guests join and leave, and handle the host role passing to another device with `shareHostChanged()`.
+Functions: `guests`, `shareGuest()`, `shareHostChanged()`, `shareJoined()` / `shareLeft()`.
+Numbers: `SATELLITE_SCALE`, `MAX_SATELLITES`.
+Check iPad: one satellite appears per person and shows that person's own features; rotate the device and the layout stays in frame. Check laptop: a second browser window can act as a participant.
+
+**Step 17 — Laptop fallback for tilt and shake.**
+Add keyboard keys and on-screen buttons that stand in for tilt and shake on devices without sensors, gated on `window.sensorsEnabled`. Keep the mouse handlers for touch and drag, and return `false` from all of them.
+Functions: `keyPressed()` / `keyIsDown()`, `createButton()` or buttons drawn on the canvas.
 Numbers: `KEY_TILT_FORCE`, `KEY_SHAKE`.
-Check laptop: the full experience with mouse and keys. Check iPad: rotate the device; the layout stays in frame; the screen stays on; the collective and satellites stay legible.
+Check laptop: the full experience with mouse and keys. Check phone: the real sensors still work.
+
+**Step 18 — Installation polish: HTTPS, join link, orientation, screen-on.**
+Serve the sketch over HTTPS for the phone tests (`npm run phone`, or GitHub Pages). On a laptop, show the join link or QR with `getShareJoinUrl()` and `showDesktopQr()` so participants can join; the iPad is a phone-like device, so the QR will not show there. Make sure the host handles portrait and landscape, the glow reads in a dim room, and the screen stays on during a session.
+Functions: `getShareJoinUrl()`, `showDesktopQr()`, `windowResized()`.
+Check laptop: the join link/QR appears. Check iPad: rotate; the layout stays in frame; the screen stays on; the collective and satellites stay legible.
 
 ## Assumptions
 - The creature is one body blob with attached features, not a cluster of separate objects.
