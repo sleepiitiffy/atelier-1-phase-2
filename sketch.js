@@ -22,6 +22,9 @@ const PINCH_MIN = 0.7;          // smallest a pinch can make the creature
 const PINCH_MAX = 1.25;         // largest a pull can make the creature
 const SHRINK_DELAY = 4000;      // ms of no interaction before it eases back
 const SHRINK_SPEED = 0.002;     // gentle easing back to starting size
+const TAP_PULSE_SPEED = 2.2;    // how fast the tap wave travels across the body
+const TAP_PULSE_SIZE = 0.16;    // height of the tap wave
+const TAP_HUE_SHIFT = 8;        // hue nudge per tap
 const TILT_FORCE = 0.15;
 const TILT_GROWTH = 0.0004;
 const SHAKE_THRESHOLD = 25;
@@ -60,6 +63,8 @@ let specks = [], ribs = [], checkers = [], shards = [], clusters = [];
 let ripples = [];
 let pinchDist = 0;
 let lastInteraction = 0;
+let lastDragX = null, lastDragY = null;
+let tapPulses = [];
 
 // Generate the texture once, deterministically, so it stays put frame to frame.
 function buildTexture() {
@@ -314,6 +319,15 @@ function drawCreature(cx, cy, baseR, h, s, b, pulse, asym, tOffset, feats) {
         r += baseR * (L.growth || 0) * 0.35 * (1 + cos(PI * da / LOBE_WIDTH));
       }
     }
+    // Tap waves travelling from the tap angle across the whole body.
+    for (const tp of tapPulses) {
+      let da = abs(a - tp.angle);
+      if (da > 180) da = 360 - da;
+      const wave = 1 - abs(da - tp.radius * 360) / 40;
+      if (wave > 0) {
+        r += baseR * TAP_PULSE_SIZE * tp.life * wave;
+      }
+    }
     radii.push(r);
   }
   for (let pass = 0; pass < 3; pass++) {
@@ -437,6 +451,7 @@ function draw() {
   driftX = constrain(driftX, -maxDrift, maxDrift);
   driftY = constrain(driftY, -maxDrift, maxDrift);
   for (let i = 0; i < BODY_POINTS; i++) disp[i] = lerp(disp[i], 0, SETTLE_SPEED);
+  updateTapPulses();
   burst *= 0.92;
   // After a quiet period, drift gently back to the starting size.
   if (millis() - lastInteraction > SHRINK_DELAY && abs(sizeGrowth - 1) > 0.001) {
@@ -536,12 +551,12 @@ function growLobeNear(tx, ty) {
   }
 }
 
-function applyTouchReaction(tx, ty, strength) {
+function applyTouchReaction(tx, ty, strength, pull) {
+  // pull: -1 = dragging inward, +1 = dragging outward, 0 = plain touch (push out)
   const cx = width / 2 + driftX;
   const cy = height / 2 + driftY;
   const baseR = min(width, height) * CREATURE_SCALE * sizeGrowth;
   const maxPush = baseR * 0.65;
-  // Direction from the centre toward the touch, for the squash on the far side.
   const tdx = tx - cx, tdy = ty - cy;
   const tlen = max(1, sqrt(tdx * tdx + tdy * tdy));
   for (let i = 0; i < BODY_POINTS; i++) {
@@ -550,15 +565,29 @@ function applyTouchReaction(tx, ty, strength) {
     const py = cy + sin(a) * baseR;
     const d = dist(tx, ty, px, py);
     const influence = map(d, 0, baseR * 1.4, strength, 0, true);
-    // Near the touch, push out; on the opposite side, pull in for a squishy feel.
     const facing = (cos(a) * tdx + sin(a) * tdy) / tlen;
-    const push = influence * REACTION_STRENGTH - max(0, -facing) * 0.5 * strength;
+    let push;
+    if (pull < 0) {
+      // Inward drag: pull the touched edge (and its neighbours) toward the centre.
+      push = -influence * REACTION_STRENGTH * 1.2;
+    } else {
+      // Outward drag or plain touch: push out, with a soft squash on the far side.
+      push = influence * REACTION_STRENGTH - max(0, -facing) * 0.5 * strength;
+    }
     disp[i] += max(-maxPush, min(maxPush, push * baseR * 0.5));
   }
-  // Visible flash and an expanding ring at the touch point.
   burst = max(burst, TOUCH_FLASH * strength);
   ripples.push({ x: tx, y: ty, r: baseR * 0.15, a: 170 });
-  sizeGrowth = min(1.25, sizeGrowth + GROWTH_RATE * strength);
+  if (pull >= 0) sizeGrowth = min(1.25, sizeGrowth + GROWTH_RATE * strength);
+}
+
+function updateTapPulses() {
+  for (let i = tapPulses.length - 1; i >= 0; i--) {
+    const tp = tapPulses[i];
+    tp.radius += TAP_PULSE_SPEED * 0.01;
+    tp.life *= 0.95;
+    if (tp.radius > 1 || tp.life < 0.05) tapPulses.splice(i, 1);
+  }
 }
 
 function drawRipples() {
@@ -591,18 +620,26 @@ function twoFingerDist() {
 
 function mousePressed() {
   lastInteraction = millis();
+  lastDragX = null; lastDragY = null;
   if (touches && touches.length >= 2) {
     pinchDist = twoFingerDist();
   } else if (touches && touches.length === 1) {
-    applyTouchReaction(touches[0].x, touches[0].y, 1);
-    growPearlNear(touches[0].x, touches[0].y);
-    growLobeNear(touches[0].x, touches[0].y);
+    spawnTap(touches[0].x, touches[0].y);
   } else {
-    applyTouchReaction(mouseX, mouseY, 1);
-    growPearlNear(mouseX, mouseY);
-    growLobeNear(mouseX, mouseY);
+    spawnTap(mouseX, mouseY);
   }
   return false;
+}
+
+function spawnTap(x, y) {
+  const cx = width / 2 + driftX;
+  const cy = height / 2 + driftY;
+  const angle = (atan2(y - cy, x - cx) + 360) % 360;
+  tapPulses.push({ angle, radius: 0, life: 1 });
+  hueBase = (hueBase + TAP_HUE_SHIFT) % 360;
+  applyTouchReaction(x, y, 1);
+  growPearlNear(x, y);
+  growLobeNear(x, y);
 }
 
 function mouseDragged() {
@@ -618,18 +655,27 @@ function mouseDragged() {
     return false;
   }
   pinchDist = 0;
-  const dx = mouseX - pmouseX;
-  const dy = mouseY - pmouseY;
+  const usingTouch = touches && touches.length === 1;
+  const nx = usingTouch ? touches[0].x : mouseX;
+  const ny = usingTouch ? touches[0].y : mouseY;
+  const px = lastDragX === null ? pmouseX : lastDragX;
+  const py = lastDragY === null ? pmouseY : lastDragY;
+  lastDragX = nx; lastDragY = ny;
+
+  const cx = width / 2 + driftX;
+  const cy = height / 2 + driftY;
+  const rNow = dist(nx, ny, cx, cy);
+  const rPrev = dist(px, py, cx, cy);
+  const pull = rNow < rPrev - 0.5 ? -1 : (rNow > rPrev + 0.5 ? 1 : 0);
+
+  const dx = nx - px;
+  const dy = ny - py;
   velX += dx * DRAG_LURCH;
   velY += dy * DRAG_LURCH;
-  if (touches && touches.length === 1) {
-    applyTouchReaction(touches[0].x, touches[0].y, 0.9);
-    growTendrilNear(touches[0].x, touches[0].y);
-    growLobeNear(touches[0].x, touches[0].y);
-  } else {
-    applyTouchReaction(mouseX, mouseY, 0.9);
-    growTendrilNear(mouseX, mouseY);
-    growLobeNear(mouseX, mouseY);
+  applyTouchReaction(nx, ny, 0.9, pull);
+  if (pull >= 0) {
+    growTendrilNear(nx, ny);
+    growLobeNear(nx, ny);
   }
   asymmetry = min(0.8, asymmetry + GROWTH_RATE * 0.6);
   return false;
@@ -637,6 +683,7 @@ function mouseDragged() {
 
 function mouseReleased() {
   pinchDist = 0;
+  lastDragX = null; lastDragY = null;
   keepScreenOn();
   return false;
 }
