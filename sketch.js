@@ -2,35 +2,44 @@
 const SHARE_HOST = 'https://p5-phone-share.p5-phone-share.workers.dev';
 const ROOM = 'traces-of-light';
 const APP_NAME = 'traces-of-light';
+// If the QR should point at a public address (GitHub Pages, or the npm run phone
+// tunnel), put it here. Leave '' to use whatever address the laptop is showing.
+// A QR that encodes localhost will NOT work on a phone.
+const JOIN_URL = '';
 
-const CREATURE_SCALE = 0.2; // body radius as a fraction of min(width, height)
-const BODY_POINTS = 90;      // points around the body (higher = smoother)
-const IDLE_SPEED = 0.006;    // how fast the body drifts and breathe
-const REACTION_STRENGTH = 1.2; // how much a touch pushes the blob
-const SETTLE_SPEED = 0.08;     // how fast the wobble settles back (0..1)
-const TILT_FORCE = 0.15;       // how much tilt moves the creature
-const TILT_GROWTH = 0.0004;    // asymmetry growth from tilt
-const SHAKE_THRESHOLD = 25;    // deviceShaken threshold
-const SHAKE_GROWTH = 0.02;     // growth from shake
-const GROWTH_RATE = 0.001;     // permanent growth rate
-const SAVE_INTERVAL = 2000;    // ms between saves to localStorage
+const CREATURE_SCALE = 0.2;
+const BODY_POINTS = 90;
+const IDLE_SPEED = 0.006;
+const REACTION_STRENGTH = 1.2;
+const SETTLE_SPEED = 0.08;
+const TILT_FORCE = 0.15;
+const TILT_GROWTH = 0.0004;
+const SHAKE_THRESHOLD = 25;
+const SHAKE_GROWTH = 0.02;
+const GROWTH_RATE = 0.001;
+const SAVE_INTERVAL = 2000;
+const SEND_INTERVAL = 50;
 const STORAGE_KEY = 'traces-of-light-creature-v1';
-
-let disp = []; // displacement per body point (radius offset)
-let driftX = 0, driftY = 0;
-let velX = 0, velY = 0;
-let asymmetry = 0;       // permanent asymmetry (0..)
-let sizeGrowth = 1;      // permanent size multiplier
-let glowGrowth = 0;      // added glow
-let colourGrowth = 0;    // colour complexity shift
-let burst = 0;           // shake burst 0..1
-let lastSave = 0;
-let hueBase = 30, hueRange = 30, satBase = 25, briBase = 75;
-let DRIFT_SPEED = 0.0015, HUE_RANGE = 30;
+const BIG_SCALE = 0.26;
+const SATELLITE_SCALE = 0.08;
+const MAX_SATELLITES = 8;
 const FEATURE_GROWTH = 0.12;
 const MAX_FEATURES = 18;
 const TENDRIL_LENGTH = 1.2;
-let features = []; // {type:'tendril', angle, growth, offset}
+const KEY_TILT_FORCE = 0.3;
+const KEY_SHAKE = true;
+
+let disp = [];
+let driftX = 0, driftY = 0;
+let velX = 0, velY = 0;
+let asymmetry = 0;
+let sizeGrowth = 1;
+let glowGrowth = 0;
+let colourGrowth = 0;
+let burst = 0;
+let lastSave = 0;
+let hueBase = 30, satBase = 25, briBase = 75;
+let features = [];
 
 function loadState() {
   try {
@@ -42,7 +51,6 @@ function loadState() {
     if (typeof s.glowGrowth === 'number') glowGrowth = s.glowGrowth;
     if (typeof s.colourGrowth === 'number') colourGrowth = s.colourGrowth;
     if (typeof s.hueBase === 'number') hueBase = s.hueBase;
-    if (typeof s.hueRange === 'number') hueRange = s.hueRange;
     if (typeof s.satBase === 'number') satBase = s.satBase;
     if (typeof s.briBase === 'number') briBase = s.briBase;
     if (Array.isArray(s.features)) features = s.features.filter(f => f && typeof f.angle === 'number');
@@ -51,14 +59,55 @@ function loadState() {
   return false;
 }
 
+// Features travel as a flat array of [typeCode, angle, growth] triples.
+function featuresToArray() {
+  const arr = [];
+  for (const f of features) {
+    const code = f.type === 'tendril' ? 0 : f.type === 'pearl' ? 1 : 2;
+    arr.push(code, Math.round(f.angle * 10) / 10, Math.round((f.growth || 0) * 100) / 100);
+  }
+  return arr;
+}
+
+function featuresFromArray(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (let i = 0; i + 2 < arr.length; i += 3) {
+    out.push({
+      type: arr[i] === 0 ? 'tendril' : arr[i] === 1 ? 'pearl' : 'membrane',
+      angle: arr[i + 1],
+      growth: arr[i + 2]
+    });
+  }
+  return out;
+}
+
 function saveState() {
   try {
-    const s = { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase, hueRange, satBase, briBase, features };
+    const s = { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase, satBase, briBase, features };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
     if (window.shareConnected && typeof shareSetMe === 'function') {
-      shareSetMe('traits', { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase });
+      shareSetMe('traits', {
+        hueBase, satBase, briBase, sizeGrowth, asymmetry, glowGrowth, colourGrowth
+      });
+      shareSetMe('features', featuresToArray());
     }
   } catch (e) {}
+}
+
+// A guest entry in `guests` IS that phone's me object (with id).
+function readGuest(g) {
+  if (!g) return null;
+  const t = g.traits;
+  if (!t) return null;
+  return {
+    h: typeof t.hueBase === 'number' ? t.hueBase : hueBase,
+    s: typeof t.satBase === 'number' ? t.satBase : satBase,
+    b: typeof t.briBase === 'number' ? t.briBase : briBase,
+    sg: typeof t.sizeGrowth === 'number' ? t.sizeGrowth : 1,
+    asym: typeof t.asymmetry === 'number' ? t.asymmetry : 0,
+    feats: featuresFromArray(g.features)
+  };
 }
 
 function setup() {
@@ -71,8 +120,7 @@ function setup() {
   for (let i = 0; i < BODY_POINTS; i++) disp[i] = 0;
   const had = loadState();
   if (!had) {
-    hueBase = random(280, 340); // soft magenta/lavender/pink range from refs
-    hueRange = random(20, 50);
+    hueBase = random(280, 340);
     satBase = random(18, 40);
     briBase = random(55, 80);
   }
@@ -83,100 +131,63 @@ function setup() {
     room: ROOM,
     app: APP_NAME,
     shared: {},
-    me: { traits: { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase, hueRange, satBase, briBase } }
+    sendInterval: SEND_INTERVAL,
+    me: {
+      traits: { hueBase, satBase, briBase, sizeGrowth, asymmetry, glowGrowth, colourGrowth },
+      features: []
+    }
   });
 
   enablePermissionsTap(['gyro', 'share'], 'Tap to enable motion and join the room');
+
+  // Room and host are fixed in this sketch, so a phone only needs the page URL.
+  // Keep the QR short (no share params) and large so it scans reliably.
+  if (typeof showDesktopQr === 'function') {
+    const opts = { share: false, size: 260, label: 'Scan to join' };
+    if (JOIN_URL) {
+      opts.url = JOIN_URL;
+    } else if (window.location && /^https?:$/.test(window.location.protocol)) {
+      opts.url = window.location.href.split('?')[0];
+    }
+    showDesktopQr(opts);
+  }
 }
 
-function draw() {
-  background(0);
-
-  // Tilt control
-  if (window.sensorsEnabled) {
-    const tx = constrain(rotationY, -45, 45);
-    const ty = constrain(rotationX, -45, 45);
-    velX += map(tx, -45, 45, -TILT_FORCE, TILT_FORCE);
-    velY += map(ty, -45, 45, -TILT_FORCE, TILT_FORCE);
-    asymmetry = min(0.8, asymmetry + abs(tx) * TILT_GROWTH * 0.01 + abs(ty) * TILT_GROWTH * 0.01);
-  }
-
-  velX *= 0.92;
-  velY *= 0.92;
-  driftX += velX;
-  driftY += velY;
-  const maxDrift = min(width, height) * 0.15;
-  driftX = constrain(driftX, -maxDrift, maxDrift);
-  driftY = constrain(driftY, -maxDrift, maxDrift);
-
-  // Settle displacements back toward 0.
-  for (let i = 0; i < BODY_POINTS; i++) {
-    disp[i] = lerp(disp[i], 0, SETTLE_SPEED);
-  }
-  burst *= 0.92;
-
-  // Save periodically
-  if (millis() - lastSave > SAVE_INTERVAL) {
-    saveState();
-    lastSave = millis();
-  }
-
-  const cx = width / 2 + driftX;
-  const cy = height / 2 + driftY;
-  const baseR = min(width, height) * CREATURE_SCALE * sizeGrowth;
-  const t = frameCount * IDLE_SPEED;
-  const pulse = 1 + 0.03 * sin(frameCount * 0.02);
-
-  // Palette stays stable unless changed by interactions
-  const hueNow = hueBase % 360;
-  const satNow = constrain(satBase + colourGrowth * 10, 0, 100);
-  const briNow = constrain(briBase + burst * 10, 0, 100);
-
-  // Soft layered glow (ref-like translucency)
-  const glowAlpha = 8 + glowGrowth * 30 + burst * 20;
-  noStroke();
-  fill((hueNow + 40) % 360, satNow * 0.3, briNow + 10, constrain(glowAlpha * 0.4, 0, 30));
-  circle(cx + 6, cy - 4, baseR * 1.9 * pulse * 2);
-  fill((hueNow + 20) % 360, satNow * 0.4, briNow, constrain(glowAlpha * 0.6, 0, 45));
-  circle(cx - 4, cy + 6, baseR * 1.6 * pulse * 2);
-  fill(hueNow, satNow * 0.5, briNow, constrain(glowAlpha, 0, 60));
-  circle(cx, cy, baseR * 1.3 * pulse * 2);
-
-  // Breathing noisy blob body with asymmetry (smooth radii)
+function drawCreature(cx, cy, baseR, h, s, b, pulse, asym, tOffset, feats) {
+  const t = (frameCount + tOffset) * IDLE_SPEED;
   const radii = [];
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
     const n = noise(cos(a) * 2.2 + t * 1.5, sin(a) * 2.2 + t * 1.5);
-    let r = baseR * pulse * (0.65 + 0.55 * n) + disp[i];
-    r *= 1 + asymmetry * 0.35 * sin(a * 1.3 + t * 10) + 0.12 * sin(a * 2.7 + t * 20);
+    let r = baseR * pulse * (0.65 + 0.55 * n);
+    r *= 1 + asym * 0.35 * sin(a * 1.3 + t * 10) + 0.12 * sin(a * 2.7 + t * 20);
     radii.push(r);
   }
   for (let pass = 0; pass < 1; pass++) {
     const prev = radii.slice();
     for (let i = 0; i < BODY_POINTS; i++) {
       const a = prev[(i - 1 + BODY_POINTS) % BODY_POINTS];
-      const b = prev[i];
-      const c = prev[(i + 1) % BODY_POINTS];
-      radii[i] = (a + b + c) / 3;
+      const b2 = prev[i];
+      const c2 = prev[(i + 1) % BODY_POINTS];
+      radii[i] = (a + b2 + c2) / 3;
     }
   }
-  // Layered translucent blobs for fluid look
-  fill((hueNow + 10) % 360, satNow * 0.5, briNow * 0.9, 70);
   noStroke();
+  fill((h + 10) % 360, s * 0.5, b * 0.9, 70);
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
-    vertex(cx + cos(a) * radii[i] + 10, cy + sin(a) * radii[i] - 8);
+    vertex(cx + cos(a) * radii[i] + 6, cy + sin(a) * radii[i] - 4);
   }
   endShape(CLOSE);
-  fill(hueNow, satNow * 0.55, briNow, 120);
+  fill(h, s * 0.55, b, 120);
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
-    vertex(cx + cos(a) * radii[i] - 6, cy + sin(a) * radii[i] + 5);
+    vertex(cx + cos(a) * radii[i] - 4, cy + sin(a) * radii[i] + 3);
   }
   endShape(CLOSE);
-  fill((hueNow - 10 + 360) % 360, satNow * 0.45, briNow + 5, 100);
+  fill((h - 10 + 360) % 360, s * 0.45, b + 5, 100);
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
@@ -184,7 +195,114 @@ function draw() {
   }
   endShape(CLOSE);
 
-  // Whimsical floating blobs orbiting slowly
+  // Soft internal features — subtle pearls, membranes and short tendrils
+  const fl = feats || [];
+  for (const f of fl) {
+    const a = ((f.angle || 0) % 360 + 360) % 360;
+    const idx = Math.floor(a / 360 * BODY_POINTS) % BODY_POINTS;
+    const r0 = radii[idx] || baseR;
+    if (f.type === 'pearl') {
+      const pr = baseR * 0.025 * (0.4 + (f.growth || 0));
+      fill((h + 20) % 360, s * 0.25, min(b + 10, 100), 40);
+      circle(cx + cos(a) * r0 * 0.7, cy + sin(a) * r0 * 0.7, pr * 2);
+    } else if (f.type === 'membrane') {
+      fill((h + 30) % 360, s * 0.2, b, 18);
+      ellipse(cx + cos(a) * r0 * 0.7, cy + sin(a) * r0 * 0.7,
+        baseR * 0.3 * (f.growth || 0.4), baseR * 0.2 * (f.growth || 0.4));
+    } else if (f.type === 'tendril') {
+      const len = baseR * 0.22 * (0.3 + (f.growth || 0));
+      stroke((h + 10) % 360, s * 0.2, b, 45);
+      strokeWeight(max(1, baseR * 0.02));
+      line(cx + cos(a) * r0 * 0.8, cy + sin(a) * r0 * 0.8,
+        cx + cos(a + 12) * (r0 * 0.8 + len), cy + sin(a + 12) * (r0 * 0.8 + len));
+      noStroke();
+    }
+  }
+}
+
+function draw() {
+  background(0);
+
+  if (window.shareIsHost) {
+    const guests = (window.guests || []).slice(0, MAX_SATELLITES);
+    const sources = [{ h: hueBase, s: satBase, b: briBase, sg: sizeGrowth, asym: asymmetry, feats: features }];
+    for (const g of guests) {
+      const snap = readGuest(g);
+      if (snap) sources.push(snap);
+    }
+    let hx = 0, hy = 0;
+    for (const src of sources) { hx += cos(src.h); hy += sin(src.h); }
+    const avgH = (atan2(hy / sources.length, hx / sources.length) + 360) % 360;
+    const avgS = sources.reduce((a, src) => a + src.s, 0) / sources.length;
+    const avgB = sources.reduce((a, src) => a + src.b, 0) / sources.length;
+    const avgSG = sources.reduce((a, src) => a + src.sg, 0) / sources.length;
+    const avgA = sources.reduce((a, src) => a + src.asym, 0) / sources.length;
+    const cx = width / 2, cy = height / 2;
+    let baseR = min(width, height) * BIG_SCALE * avgSG;
+    if (guests.length > 0) {
+      const orbitR = min(width, height) * 0.4;
+      const satMaxR = min(width, height) * SATELLITE_SCALE * 1.25;
+      baseR = Math.min(baseR, orbitR - satMaxR - min(width, height) * 0.07);
+    }
+    const pulse = 1 + 0.03 * sin(frameCount * 0.02);
+
+    noStroke();
+    fill((avgH + 30) % 360, avgS * 0.3, avgB, 20);
+    circle(cx, cy, baseR * 2.2 * pulse);
+    drawCreature(cx, cy, baseR, avgH, avgS, avgB, pulse, avgA, 0, []);
+
+    if (guests.length === 0) {
+      fill(0, 0, 100, 90);
+      textAlign(CENTER, CENTER);
+      text('Waiting for participants...', cx, cy + baseR + 30);
+    } else {
+      const r = min(width, height) * 0.4;
+      for (let i = 0; i < guests.length; i++) {
+        const snap = readGuest(guests[i]);
+        if (!snap) continue;
+        const ang = (i / guests.length) * 360;
+        drawCreature(cx + cos(ang) * r, cy + sin(ang) * r,
+          min(width, height) * SATELLITE_SCALE * snap.sg,
+          snap.h, snap.s, snap.b, pulse, snap.asym, i * 10, snap.feats);
+      }
+    }
+    return;
+  }
+
+  if (window.sensorsEnabled) {
+    const tx = constrain(rotationY, -45, 45);
+    const ty = constrain(rotationX, -45, 45);
+    velX += map(tx, -45, 45, -TILT_FORCE, TILT_FORCE);
+    velY += map(ty, -45, 45, -TILT_FORCE, TILT_FORCE);
+    asymmetry = min(0.8, asymmetry + abs(tx) * TILT_GROWTH * 0.01 + abs(ty) * TILT_GROWTH * 0.01);
+  }
+  velX *= 0.92; velY *= 0.92;
+  driftX += velX; driftY += velY;
+  const maxDrift = min(width, height) * 0.15;
+  driftX = constrain(driftX, -maxDrift, maxDrift);
+  driftY = constrain(driftY, -maxDrift, maxDrift);
+  for (let i = 0; i < BODY_POINTS; i++) disp[i] = lerp(disp[i], 0, SETTLE_SPEED);
+  burst *= 0.92;
+  if (millis() - lastSave > SAVE_INTERVAL) { saveState(); lastSave = millis(); }
+
+  const cx = width / 2 + driftX, cy = height / 2 + driftY;
+  const baseR = min(width, height) * CREATURE_SCALE * sizeGrowth;
+  const pulse = 1 + 0.03 * sin(frameCount * 0.02);
+  const hueNow = hueBase % 360;
+  const satNow = constrain(satBase + colourGrowth * 10, 0, 100);
+  const briNow = constrain(briBase + burst * 10, 0, 100);
+
+  const glowAlpha = 10 + glowGrowth * 30 + burst * 20;
+  noStroke();
+  fill((hueNow + 30) % 360, satNow * 0.35, briNow, constrain(glowAlpha * 0.4, 0, 30));
+  circle(cx + 6, cy - 4, baseR * 1.9 * pulse * 2);
+  fill((hueNow + 20) % 360, satNow * 0.4, briNow, constrain(glowAlpha * 0.6, 0, 45));
+  circle(cx - 4, cy + 6, baseR * 1.6 * pulse * 2);
+  fill(hueNow, satNow * 0.5, briNow, constrain(glowAlpha, 0, 60));
+  circle(cx, cy, baseR * 1.3 * pulse * 2);
+
+  drawCreature(cx, cy, baseR, hueNow, satNow, briNow, pulse, asymmetry, 0, features);
+
   for (let k = 0; k < 3; k++) {
     const ang = frameCount * (0.3 + k * 0.15) + k * 120;
     const orbitR = baseR * (1.4 + 0.2 * sin(frameCount * 0.02 + k));
@@ -194,23 +312,6 @@ function draw() {
     fill((hueNow + 40 + k * 30) % 360, satNow * 0.4, briNow, 50);
     circle(sx, sy, sr * 2);
   }
-
-  // Soft internal features (subtle, not virus-like)
-  for (const f of features) {
-    const ang = f.angle + (f.offset || 0) * 30;
-    const idx = Math.floor(((ang % 360 + 360) % 360) / 360 * BODY_POINTS) % BODY_POINTS;
-    const r0 = (radii[idx] || baseR) * 0.6;
-    const hMuted = (hueNow + 30) % 360;
-    const sMuted = satNow * 0.3;
-    const bMuted = constrain(briNow * 1.1, 50, 95);
-    if (f.type === 'pearl') {
-      const pr = baseR * 0.03 * (0.2 + (f.growth || 0));
-      fill(hMuted, sMuted, bMuted, 30);
-      noStroke();
-      circle(cx + cos(ang) * r0, cy + sin(ang) * r0, pr * 2);
-    }
-    // tendrils/membranes hidden for a softer look
-  }
 }
 
 function deviceShaken() {
@@ -218,7 +319,34 @@ function deviceShaken() {
   glowGrowth = min(1, glowGrowth + SHAKE_GROWTH);
   colourGrowth = min(1, colourGrowth + SHAKE_GROWTH * 0.8);
   if (features.length < MAX_FEATURES) {
-    features.push({ type: 'membrane', angle: random(360), growth: 0.4, offset: random(-0.2, 0.2) });
+    features.push({ type: 'membrane', angle: random(360), growth: 0.4 });
+  }
+}
+
+function growTendrilNear(tx, ty) {
+  const cx = width / 2 + driftX;
+  const cy = height / 2 + driftY;
+  const ang = (atan2(ty - cy, tx - cx) + 360) % 360;
+  let best = -1, bestD = 999;
+  for (let i = 0; i < features.length; i++) {
+    if (features[i].type !== 'tendril') continue;
+    let d = Math.abs(features[i].angle - ang);
+    if (d > 180) d = 360 - d;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  if (best >= 0 && bestD < 30) {
+    features[best].growth = min(1.5, features[best].growth + FEATURE_GROWTH * 0.5);
+  } else if (features.length < MAX_FEATURES) {
+    features.push({ type: 'tendril', angle: (ang + random(-8, 8) + 360) % 360, growth: 0.25 });
+  }
+}
+
+function growPearlNear(tx, ty) {
+  const cx = width / 2 + driftX;
+  const cy = height / 2 + driftY;
+  const ang = (atan2(ty - cy, tx - cx) + 360) % 360;
+  if (features.length < MAX_FEATURES) {
+    features.push({ type: 'pearl', angle: (ang + random(-6, 6) + 360) % 360, growth: 0.3 });
   }
 }
 
@@ -235,8 +363,13 @@ function applyTouchReaction(tx, ty, strength) {
     const influence = map(d, 0, baseR * 1.2, strength, 0, true);
     disp[i] += max(-maxPush, min(maxPush, influence * REACTION_STRENGTH));
   }
-  // Tiny permanent growth from touch/drag
   sizeGrowth = min(1.25, sizeGrowth + GROWTH_RATE * strength);
+}
+
+// The view follows window.shareIsHost every frame, so a host handover
+// switches the display automatically. This callback is kept for clarity.
+function shareHostChanged(isHost) {
+  lastSave = 0;
 }
 
 function mousePressed() {
@@ -249,38 +382,9 @@ function mousePressed() {
   return false;
 }
 
-function growTendrilNear(tx, ty) {
-  const cx = width / 2 + driftX;
-  const cy = height / 2 + driftY;
-  const ang = (atan2(ty - cy, tx - cx) * 180 / PI + 360) % 360;
-  let best = -1, bestD = 999;
-  for (let i = 0; i < features.length; i++) {
-    if (features[i].type !== 'tendril') continue;
-    let d = abs(features[i].angle - ang);
-    if (d > 180) d = 360 - d;
-    if (d < bestD) { bestD = d; best = i; }
-  }
-  if (best >= 0 && bestD < 30) {
-    features[best].growth = min(1.5, features[best].growth + FEATURE_GROWTH * 0.5);
-  } else if (features.length < MAX_FEATURES) {
-    features.push({ type: 'tendril', angle: ang + random(-8, 8), growth: 0.25, offset: random(-0.2, 0.2) });
-  }
-}
-function growPearlNear(tx, ty) {
-  const cx = width / 2 + driftX;
-  const cy = height / 2 + driftY;
-  const ang = (atan2(ty - cy, tx - cx) * 180 / PI + 360) % 360;
-  if (features.length < MAX_FEATURES) {
-    features.push({ type: 'pearl', angle: ang + random(-6, 6), growth: 0.3, offset: random(-0.15, 0.15) });
-  }
-}
-
 function mouseDragged() {
   if (touches && touches.length > 0) {
-    for (const t of touches) {
-      applyTouchReaction(t.x, t.y, 0.5);
-      growTendrilNear(t.x, t.y);
-    }
+    for (const t of touches) { applyTouchReaction(t.x, t.y, 0.5); growTendrilNear(t.x, t.y); }
   } else {
     applyTouchReaction(mouseX, mouseY, 0.5);
     growTendrilNear(mouseX, mouseY);
@@ -296,11 +400,11 @@ function mouseReleased() {
 
 function keyPressed() {
   if (!window.sensorsEnabled) {
-    if (keyCode === LEFT_ARROW) velX -= TILT_FORCE * 2;
-    if (keyCode === RIGHT_ARROW) velX += TILT_FORCE * 2;
-    if (keyCode === UP_ARROW) velY -= TILT_FORCE * 2;
-    if (keyCode === DOWN_ARROW) velY += TILT_FORCE * 2;
-    if (key === ' ') deviceShaken();
+    if (keyCode === LEFT_ARROW) velX -= KEY_TILT_FORCE;
+    if (keyCode === RIGHT_ARROW) velX += KEY_TILT_FORCE;
+    if (keyCode === UP_ARROW) velY -= KEY_TILT_FORCE;
+    if (keyCode === DOWN_ARROW) velY += KEY_TILT_FORCE;
+    if (KEY_SHAKE && key === ' ') deviceShaken();
   }
   return false;
 }
