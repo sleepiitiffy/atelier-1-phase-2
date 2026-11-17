@@ -5,7 +5,7 @@ const APP_NAME = 'traces-of-light';
 // If the QR should point at a public address (GitHub Pages, or the npm run phone
 // tunnel), put it here. Leave '' to use whatever address the laptop is showing.
 // A QR that encodes localhost will NOT work on a phone.
-const JOIN_URL = '';
+const JOIN_URL = 'https://sleepiitiffy.github.io/atelier-1-phase-2/';
 
 const CREATURE_SCALE = 0.2;
 const BODY_POINTS = 90;
