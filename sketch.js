@@ -10,8 +10,10 @@ const JOIN_URL = 'https://sleepiitiffy.github.io/atelier-1-phase-2/';
 const CREATURE_SCALE = 0.2;
 const BODY_POINTS = 90;
 const IDLE_SPEED = 0.006;
-const REACTION_STRENGTH = 1.2;
-const SETTLE_SPEED = 0.08;
+const REACTION_STRENGTH = 2.6;  // how far a touch deforms the body
+const SETTLE_SPEED = 0.05;      // lower = wobble lasts longer
+const TOUCH_FLASH = 0.7;        // brightness kick on touch
+const DRAG_LURCH = 0.06;        // how much a drag shoves the whole creature
 const TILT_FORCE = 0.15;
 const TILT_GROWTH = 0.0004;
 const SHAKE_THRESHOLD = 25;
@@ -47,6 +49,7 @@ let lastSave = 0;
 let hueBase = 30, satBase = 25, briBase = 75;
 let features = [];
 let specks = [], ribs = [], checkers = [], shards = [], clusters = [];
+let ripples = [];
 
 // Generate the texture once, deterministically, so it stays put frame to frame.
 function buildTexture() {
@@ -435,6 +438,7 @@ function draw() {
   circle(cx, cy, baseR * 1.3 * pulse * 2);
 
   drawCreature(cx, cy, baseR, hueNow, satNow, briNow, pulse, asymmetry, 0, features);
+  drawRipples();
 
   for (let k = 0; k < 3; k++) {
     const ang = frameCount * (0.3 + k * 0.15) + k * 120;
@@ -487,16 +491,42 @@ function applyTouchReaction(tx, ty, strength) {
   const cx = width / 2 + driftX;
   const cy = height / 2 + driftY;
   const baseR = min(width, height) * CREATURE_SCALE * sizeGrowth;
-  const maxPush = baseR * 0.35;
+  const maxPush = baseR * 0.65;
+  // Direction from the centre toward the touch, for the squash on the far side.
+  const tdx = tx - cx, tdy = ty - cy;
+  const tlen = max(1, sqrt(tdx * tdx + tdy * tdy));
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
     const px = cx + cos(a) * baseR;
     const py = cy + sin(a) * baseR;
     const d = dist(tx, ty, px, py);
-    const influence = map(d, 0, baseR * 1.2, strength, 0, true);
-    disp[i] += max(-maxPush, min(maxPush, influence * REACTION_STRENGTH));
+    const influence = map(d, 0, baseR * 1.4, strength, 0, true);
+    // Near the touch, push out; on the opposite side, pull in for a squishy feel.
+    const facing = (cos(a) * tdx + sin(a) * tdy) / tlen;
+    const push = influence * REACTION_STRENGTH - max(0, -facing) * 0.5 * strength;
+    disp[i] += max(-maxPush, min(maxPush, push * baseR * 0.5));
   }
+  // Visible flash and an expanding ring at the touch point.
+  burst = max(burst, TOUCH_FLASH * strength);
+  ripples.push({ x: tx, y: ty, r: baseR * 0.15, a: 170 });
   sizeGrowth = min(1.25, sizeGrowth + GROWTH_RATE * strength);
+}
+
+function drawRipples() {
+  noFill();
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const rp = ripples[i];
+    rp.r *= 1.08;
+    rp.a *= 0.9;
+    if (rp.a < 6) {
+      ripples.splice(i, 1);
+    } else {
+      stroke(hueBase % 360, satBase * 0.4, 100, rp.a);
+      strokeWeight(2);
+      circle(rp.x, rp.y, rp.r * 2);
+    }
+  }
+  noStroke();
 }
 
 // The view follows window.shareIsHost every frame, so a host handover
@@ -516,13 +546,17 @@ function mousePressed() {
 }
 
 function mouseDragged() {
+  const dx = mouseX - pmouseX;
+  const dy = mouseY - pmouseY;
+  velX += dx * DRAG_LURCH;
+  velY += dy * DRAG_LURCH;
   if (touches && touches.length > 0) {
-    for (const t of touches) { applyTouchReaction(t.x, t.y, 0.5); growTendrilNear(t.x, t.y); }
+    for (const t of touches) { applyTouchReaction(t.x, t.y, 0.9); growTendrilNear(t.x, t.y); }
   } else {
-    applyTouchReaction(mouseX, mouseY, 0.5);
+    applyTouchReaction(mouseX, mouseY, 0.9);
     growTendrilNear(mouseX, mouseY);
   }
-  asymmetry = min(0.8, asymmetry + GROWTH_RATE * 0.2);
+  asymmetry = min(0.8, asymmetry + GROWTH_RATE * 0.6);
   return false;
 }
 
