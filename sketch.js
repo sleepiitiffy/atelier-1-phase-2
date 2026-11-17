@@ -28,6 +28,12 @@ const MAX_FEATURES = 18;
 const TENDRIL_LENGTH = 1.2;
 const KEY_TILT_FORCE = 0.3;
 const KEY_SHAKE = true;
+const TEX_SEED = 7;        // texture is generated once from this seed, so it never flickers
+const TEX_SPECKS = 55;     // granular dots inside the body
+const TEX_RIBS = 12;       // comb-like ridges from reference 1
+const TEX_CHECKERS = 9;    // checker beads from reference 1
+const TEX_SHARDS = 4;      // translucent facets
+const TEX_CLUSTERS = 3;    // clustered pearl-like growths
 
 let disp = [];
 let driftX = 0, driftY = 0;
@@ -40,6 +46,54 @@ let burst = 0;
 let lastSave = 0;
 let hueBase = 30, satBase = 25, briBase = 75;
 let features = [];
+let specks = [], ribs = [], checkers = [], shards = [], clusters = [];
+
+// Generate the texture once, deterministically, so it stays put frame to frame.
+function buildTexture() {
+  randomSeed(TEX_SEED);
+  specks = [];
+  for (let i = 0; i < TEX_SPECKS; i++) {
+    specks.push({
+      ang: random(360),
+      rad: sqrt(random()) * 0.78,
+      size: random(0.006, 0.02),
+      tone: floor(random(3)),
+      alpha: random(18, 60)
+    });
+  }
+  const ribBase = random(360);
+  ribs = [];
+  for (let i = 0; i < TEX_RIBS; i++) {
+    ribs.push({ ang: ribBase + i * random(7, 12), len: random(0.12, 0.3) });
+  }
+  const checkBase = random(360);
+  checkers = [];
+  for (let i = 0; i < TEX_CHECKERS; i++) {
+    checkers.push({ ang: checkBase + i * 6, on: i % 2 === 0 });
+  }
+  shards = [];
+  for (let i = 0; i < TEX_SHARDS; i++) {
+    shards.push({ ang: random(360), size: random(0.12, 0.22) });
+  }
+  clusters = [];
+  for (let i = 0; i < TEX_CLUSTERS; i++) {
+    const beads = [];
+    const n = floor(random(4, 8));
+    for (let j = 0; j < n; j++) {
+      beads.push({ x: random(-1, 1), y: random(-1, 1), r: random(0.5, 1.1) });
+    }
+    clusters.push({ ang: random(360), rad: random(0.35, 0.6), beads });
+  }
+  randomSeed(Math.floor(Math.random() * 1e9));
+}
+
+// Radius of the body at a given angle, interpolated from the smoothed radii.
+function radiusAt(radii, ang) {
+  const f = (((ang % 360) + 360) % 360) / 360 * BODY_POINTS;
+  const i = Math.floor(f);
+  const j = (i + 1) % BODY_POINTS;
+  return lerp(radii[i], radii[j], f - i);
+}
 
 function loadState() {
   try {
@@ -118,6 +172,7 @@ function setup() {
   lockGestures();
   angleMode(DEGREES);
   for (let i = 0; i < BODY_POINTS; i++) disp[i] = 0;
+  buildTexture();
   const had = loadState();
   if (!had) {
     hueBase = random(280, 340);
@@ -151,6 +206,82 @@ function setup() {
     }
     showDesktopQr(opts);
   }
+}
+
+function drawTexture(cx, cy, baseR, radii, h, s, b) {
+  push();
+  // Granular speckles scattered inside the body.
+  noStroke();
+  for (const p of specks) {
+    const r = radiusAt(radii, p.ang) * p.rad;
+    const x = cx + cos(p.ang) * r;
+    const y = cy + sin(p.ang) * r;
+    const d = baseR * p.size * 2;
+    if (p.tone === 0) fill(h, s * 0.5, b * 0.45, p.alpha);
+    else if (p.tone === 1) fill(h, s * 0.25, 100, p.alpha * 0.8);
+    else fill((h + 30) % 360, s * 0.6, b, p.alpha);
+    circle(x, y, d);
+  }
+
+  // Comb-like ribs from reference 1: curved ridges running out toward the edge.
+  noFill();
+  for (const r0 of ribs) {
+    stroke((h + 20) % 360, s * 0.4, b + 10, 55);
+    strokeWeight(max(1, baseR * 0.012));
+    beginShape();
+    for (let k = 0; k <= 6; k++) {
+      const f = k / 6;
+      const a = r0.ang + sin(f * PI) * 6;
+      const r = radiusAt(radii, a) * (0.45 + 0.5 * f * r0.len / 0.3);
+      vertex(cx + cos(a) * r, cy + sin(a) * r);
+    }
+    endShape();
+  }
+  noStroke();
+
+  // Checker beads from reference 1: alternating light/dark squares on a band.
+  for (const c of checkers) {
+    const r = radiusAt(radii, c.ang) * 0.6;
+    const x = cx + cos(c.ang) * r;
+    const y = cy + sin(c.ang) * r;
+    push();
+    translate(x, y);
+    rotate(c.ang);
+    const sz = baseR * 0.05;
+    if (c.on) fill(h, s * 0.3, b * 0.4, 110);
+    else fill(h, s * 0.2, 100, 120);
+    rectMode(CENTER);
+    rect(0, 0, sz, sz);
+    pop();
+  }
+
+  // Translucent crystalline facets near the edge.
+  for (const sh of shards) {
+    const r = radiusAt(radii, sh.ang) * 0.72;
+    const x = cx + cos(sh.ang) * r;
+    const y = cy + sin(sh.ang) * r;
+    const sz = baseR * sh.size;
+    fill((h + 45) % 360, s * 0.35, b + 15, 28);
+    triangle(x, y, x + cos(sh.ang - 20) * sz, y + sin(sh.ang - 20) * sz,
+      x + cos(sh.ang + 20) * sz, y + sin(sh.ang + 20) * sz);
+  }
+
+  // Clustered pearl-like growths: little bunches of beads with highlights.
+  for (const c of clusters) {
+    const rr = radiusAt(radii, c.ang) * c.rad;
+    const ox = cx + cos(c.ang) * rr;
+    const oy = cy + sin(c.ang) * rr;
+    for (const bead of c.beads) {
+      const bx = ox + bead.x * baseR * 0.09;
+      const by = oy + bead.y * baseR * 0.09;
+      const d = baseR * 0.035 * bead.r;
+      fill(h, s * 0.3, 100, 150);
+      circle(bx, by, d);
+      fill(0, 0, 100, 160);
+      circle(bx - d * 0.2, by - d * 0.2, d * 0.3);
+    }
+  }
+  pop();
 }
 
 function drawCreature(cx, cy, baseR, h, s, b, pulse, asym, tOffset, feats) {
@@ -194,6 +325,8 @@ function drawCreature(cx, cy, baseR, h, s, b, pulse, asym, tOffset, feats) {
     vertex(cx + cos(a) * radii[i], cy + sin(a) * radii[i]);
   }
   endShape(CLOSE);
+
+  drawTexture(cx, cy, baseR, radii, h, s, b);
 
   // Soft internal features — subtle pearls, membranes and short tendrils
   const fl = feats || [];
