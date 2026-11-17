@@ -3,7 +3,7 @@ const SHARE_HOST = 'https://p5-phone-share.p5-phone-share.workers.dev';
 const ROOM = 'traces-of-light';
 const APP_NAME = 'traces-of-light';
 
-const CREATURE_SCALE = 0.32; // body radius as a fraction of min(width, height)
+const CREATURE_SCALE = 0.2; // body radius as a fraction of min(width, height)
 const BODY_POINTS = 160;     // points around the body (higher = smoother)
 const IDLE_SPEED = 0.006;    // how fast the body drifts and breathe
 const REACTION_STRENGTH = 1.2; // how much a touch pushes the blob
@@ -79,15 +79,16 @@ function draw() {
     const ty = constrain(rotationX, -45, 45);
     velX += map(tx, -45, 45, -TILT_FORCE, TILT_FORCE);
     velY += map(ty, -45, 45, -TILT_FORCE, TILT_FORCE);
-    asymmetry += abs(tx) * TILT_GROWTH * 0.01 + abs(ty) * TILT_GROWTH * 0.01;
+    asymmetry = min(0.8, asymmetry + abs(tx) * TILT_GROWTH * 0.01 + abs(ty) * TILT_GROWTH * 0.01);
   }
 
   velX *= 0.92;
   velY *= 0.92;
   driftX += velX;
   driftY += velY;
-  driftX = constrain(driftX, -width * 0.35, width * 0.35);
-  driftY = constrain(driftY, -height * 0.35, height * 0.35);
+  const maxDrift = min(width, height) * 0.15;
+  driftX = constrain(driftX, -maxDrift, maxDrift);
+  driftY = constrain(driftY, -maxDrift, maxDrift);
 
   // Settle displacements back toward 0.
   for (let i = 0; i < BODY_POINTS; i++) {
@@ -164,7 +165,7 @@ function applyTouchReaction(tx, ty, strength) {
     disp[i] += max(-maxPush, min(maxPush, influence * REACTION_STRENGTH));
   }
   // Tiny permanent growth from touch/drag
-  sizeGrowth = min(1.6, sizeGrowth + GROWTH_RATE * strength);
+  sizeGrowth = min(1.25, sizeGrowth + GROWTH_RATE * strength);
 }
 
 function mousePressed() {
@@ -183,7 +184,7 @@ function mouseDragged() {
     applyTouchReaction(mouseX, mouseY, 0.5);
   }
   // Drag also grows asymmetry a bit
-  asymmetry += GROWTH_RATE * 0.2;
+  asymmetry = min(0.8, asymmetry + GROWTH_RATE * 0.2);
   return false;
 }
 
