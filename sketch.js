@@ -50,7 +50,7 @@ function drawBlob(cx, cy, baseR, t, col) {
     const a = map(i, 0, BODY_POINTS, 0, TWO_PI);
     const n = noise(cos(a) * 1.4 + t, sin(a) * 1.4 + t);
     const r = baseR * (0.82 + 0.3 * n);
-    splineVertex(cx + cos(a) * r, cy + sin(a) * r);
+    vertex(cx + cos(a) * r, cy + sin(a) * r);
   }
   endShape(CLOSE);
 }
