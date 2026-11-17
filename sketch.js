@@ -25,8 +25,12 @@ let glowGrowth = 0;      // added glow
 let colourGrowth = 0;    // colour complexity shift
 let burst = 0;           // shake burst 0..1
 let lastSave = 0;
-let hueBase = 200, hueRange = 40, satBase = 80, briBase = 95;
-let DRIFT_SPEED = 0.002, HUE_RANGE = 40;
+let hueBase = 30, hueRange = 30, satBase = 25, briBase = 75;
+let DRIFT_SPEED = 0.0015, HUE_RANGE = 30;
+const FEATURE_GROWTH = 0.12;
+const MAX_FEATURES = 18;
+const TENDRIL_LENGTH = 1.2;
+let features = []; // {type:'tendril', angle, growth, offset}
 
 function loadState() {
   try {
@@ -41,6 +45,7 @@ function loadState() {
     if (typeof s.hueRange === 'number') hueRange = s.hueRange;
     if (typeof s.satBase === 'number') satBase = s.satBase;
     if (typeof s.briBase === 'number') briBase = s.briBase;
+    if (Array.isArray(s.features)) features = s.features.filter(f => f && typeof f.angle === 'number');
     return true;
   } catch (e) {}
   return false;
@@ -48,8 +53,11 @@ function loadState() {
 
 function saveState() {
   try {
-    const s = { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase, hueRange, satBase, briBase };
+    const s = { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase, hueRange, satBase, briBase, features };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    if (window.shareConnected && typeof shareSetMe === 'function') {
+      shareSetMe('traits', { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase });
+    }
   } catch (e) {}
 }
 
@@ -63,10 +71,10 @@ function setup() {
   for (let i = 0; i < BODY_POINTS; i++) disp[i] = 0;
   const had = loadState();
   if (!had) {
-    hueBase = random(0, 360);
-    hueRange = random(20, 60);
-    satBase = random(60, 90);
-    briBase = random(85, 100);
+    hueBase = random(280, 340); // soft magenta/lavender/pink range from refs
+    hueRange = random(20, 50);
+    satBase = random(18, 40);
+    briBase = random(55, 80);
   }
   setShakeThreshold(SHAKE_THRESHOLD);
 
@@ -119,19 +127,20 @@ function draw() {
   const t = frameCount * IDLE_SPEED;
   const pulse = 1 + 0.03 * sin(frameCount * 0.02);
 
-  // Drift palette slowly
-  hueBase = (hueBase + DRIFT_SPEED * 360) % 360;
-  const hueNow = (hueBase + noise(frameCount * 0.001) * hueRange - hueRange / 2 + 360) % 360;
+  // Palette stays stable unless changed by interactions
+  const hueNow = hueBase % 360;
   const satNow = constrain(satBase + colourGrowth * 10, 0, 100);
   const briNow = constrain(briBase + burst * 10, 0, 100);
 
-  // Glow
-  const glowAlpha = 18 + glowGrowth * 120 + burst * 80;
+  // Soft layered glow (ref-like translucency)
+  const glowAlpha = 8 + glowGrowth * 30 + burst * 20;
   noStroke();
-  fill((hueNow + 180) % 360, satNow * 0.6, briNow, constrain(glowAlpha * 0.6, 0, 80));
-  circle(cx, cy, baseR * 1.8 * pulse * 2);
-  fill((hueNow + 200) % 360, satNow * 0.7, briNow, constrain(glowAlpha, 0, 120));
-  circle(cx, cy, baseR * 1.4 * pulse * 2);
+  fill((hueNow + 40) % 360, satNow * 0.3, briNow + 10, constrain(glowAlpha * 0.4, 0, 30));
+  circle(cx + 6, cy - 4, baseR * 1.9 * pulse * 2);
+  fill((hueNow + 20) % 360, satNow * 0.4, briNow, constrain(glowAlpha * 0.6, 0, 45));
+  circle(cx - 4, cy + 6, baseR * 1.6 * pulse * 2);
+  fill(hueNow, satNow * 0.5, briNow, constrain(glowAlpha, 0, 60));
+  circle(cx, cy, baseR * 1.3 * pulse * 2);
 
   // Breathing noisy blob body with asymmetry (smooth radii)
   const radii = [];
@@ -151,20 +160,55 @@ function draw() {
       radii[i] = (a + b * 2 + c) / 4;
     }
   }
-  fill(hueNow, satNow, briNow, 220);
+  // Layered translucent blobs for fluid look
+  fill((hueNow + 10) % 360, satNow * 0.5, briNow * 0.9, 90);
   noStroke();
+  beginShape();
+  for (let i = 0; i < BODY_POINTS; i++) {
+    const a = map(i, 0, BODY_POINTS, 0, 360);
+    vertex(cx + cos(a) * radii[i] + 8, cy + sin(a) * radii[i] - 6);
+  }
+  endShape(CLOSE);
+  fill(hueNow, satNow * 0.55, briNow, 140);
+  beginShape();
+  for (let i = 0; i < BODY_POINTS; i++) {
+    const a = map(i, 0, BODY_POINTS, 0, 360);
+    vertex(cx + cos(a) * radii[i] - 5, cy + sin(a) * radii[i] + 4);
+  }
+  endShape(CLOSE);
+  fill((hueNow - 10 + 360) % 360, satNow * 0.45, briNow + 5, 120);
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
     vertex(cx + cos(a) * radii[i], cy + sin(a) * radii[i]);
   }
   endShape(CLOSE);
+
+  // Soft internal features (subtle, not virus-like)
+  for (const f of features) {
+    const ang = f.angle + (f.offset || 0) * 30;
+    const idx = Math.floor(((ang % 360 + 360) % 360) / 360 * BODY_POINTS) % BODY_POINTS;
+    const r0 = (radii[idx] || baseR) * 0.6;
+    const hMuted = (hueNow + 30) % 360;
+    const sMuted = satNow * 0.3;
+    const bMuted = constrain(briNow * 1.1, 50, 95);
+    if (f.type === 'pearl') {
+      const pr = baseR * 0.03 * (0.2 + (f.growth || 0));
+      fill(hMuted, sMuted, bMuted, 30);
+      noStroke();
+      circle(cx + cos(ang) * r0, cy + sin(ang) * r0, pr * 2);
+    }
+    // tendrils/membranes hidden for a softer look
+  }
 }
 
 function deviceShaken() {
   burst = 1;
   glowGrowth = min(1, glowGrowth + SHAKE_GROWTH);
   colourGrowth = min(1, colourGrowth + SHAKE_GROWTH * 0.8);
+  if (features.length < MAX_FEATURES) {
+    features.push({ type: 'membrane', angle: random(360), growth: 0.4, offset: random(-0.2, 0.2) });
+  }
 }
 
 function applyTouchReaction(tx, ty, strength) {
@@ -186,26 +230,67 @@ function applyTouchReaction(tx, ty, strength) {
 
 function mousePressed() {
   if (touches && touches.length > 0) {
-    for (const t of touches) applyTouchReaction(t.x, t.y, 1);
+    for (const t of touches) { applyTouchReaction(t.x, t.y, 1); growPearlNear(t.x, t.y); }
   } else {
     applyTouchReaction(mouseX, mouseY, 1);
+    growPearlNear(mouseX, mouseY);
   }
   return false;
 }
 
+function growTendrilNear(tx, ty) {
+  const cx = width / 2 + driftX;
+  const cy = height / 2 + driftY;
+  const ang = (atan2(ty - cy, tx - cx) * 180 / PI + 360) % 360;
+  let best = -1, bestD = 999;
+  for (let i = 0; i < features.length; i++) {
+    if (features[i].type !== 'tendril') continue;
+    let d = abs(features[i].angle - ang);
+    if (d > 180) d = 360 - d;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  if (best >= 0 && bestD < 30) {
+    features[best].growth = min(1.5, features[best].growth + FEATURE_GROWTH * 0.5);
+  } else if (features.length < MAX_FEATURES) {
+    features.push({ type: 'tendril', angle: ang + random(-8, 8), growth: 0.25, offset: random(-0.2, 0.2) });
+  }
+}
+function growPearlNear(tx, ty) {
+  const cx = width / 2 + driftX;
+  const cy = height / 2 + driftY;
+  const ang = (atan2(ty - cy, tx - cx) * 180 / PI + 360) % 360;
+  if (features.length < MAX_FEATURES) {
+    features.push({ type: 'pearl', angle: ang + random(-6, 6), growth: 0.3, offset: random(-0.15, 0.15) });
+  }
+}
+
 function mouseDragged() {
   if (touches && touches.length > 0) {
-    for (const t of touches) applyTouchReaction(t.x, t.y, 1);
+    for (const t of touches) {
+      applyTouchReaction(t.x, t.y, 0.5);
+      growTendrilNear(t.x, t.y);
+    }
   } else {
     applyTouchReaction(mouseX, mouseY, 0.5);
+    growTendrilNear(mouseX, mouseY);
   }
-  // Drag also grows asymmetry a bit
   asymmetry = min(0.8, asymmetry + GROWTH_RATE * 0.2);
   return false;
 }
 
 function mouseReleased() {
   keepScreenOn();
+  return false;
+}
+
+function keyPressed() {
+  if (!window.sensorsEnabled) {
+    if (keyCode === LEFT_ARROW) velX -= TILT_FORCE * 2;
+    if (keyCode === RIGHT_ARROW) velX += TILT_FORCE * 2;
+    if (keyCode === UP_ARROW) velY -= TILT_FORCE * 2;
+    if (keyCode === DOWN_ARROW) velY += TILT_FORCE * 2;
+    if (key === ' ') deviceShaken();
+  }
   return false;
 }
 
