@@ -25,26 +25,30 @@ let glowGrowth = 0;      // added glow
 let colourGrowth = 0;    // colour complexity shift
 let burst = 0;           // shake burst 0..1
 let lastSave = 0;
-
-function defaultState() {
-  return { asymmetry: 0, sizeGrowth: 1, glowGrowth: 0, colourGrowth: 0 };
-}
+let hueBase = 200, hueRange = 40, satBase = 80, briBase = 95;
+let DRIFT_SPEED = 0.002, HUE_RANGE = 40;
 
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
+    if (!raw) return false;
     const s = JSON.parse(raw);
     if (typeof s.asymmetry === 'number') asymmetry = s.asymmetry;
     if (typeof s.sizeGrowth === 'number') sizeGrowth = s.sizeGrowth;
     if (typeof s.glowGrowth === 'number') glowGrowth = s.glowGrowth;
     if (typeof s.colourGrowth === 'number') colourGrowth = s.colourGrowth;
+    if (typeof s.hueBase === 'number') hueBase = s.hueBase;
+    if (typeof s.hueRange === 'number') hueRange = s.hueRange;
+    if (typeof s.satBase === 'number') satBase = s.satBase;
+    if (typeof s.briBase === 'number') briBase = s.briBase;
+    return true;
   } catch (e) {}
+  return false;
 }
 
 function saveState() {
   try {
-    const s = { asymmetry, sizeGrowth, glowGrowth, colourGrowth };
+    const s = { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase, hueRange, satBase, briBase };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
   } catch (e) {}
 }
@@ -52,11 +56,18 @@ function saveState() {
 function setup() {
   pixelDensity(1);
   createCanvas(windowWidth, windowHeight);
+  colorMode(HSB, 360, 100, 100, 255);
   background(0);
   lockGestures();
   angleMode(DEGREES);
   for (let i = 0; i < BODY_POINTS; i++) disp[i] = 0;
-  loadState();
+  const had = loadState();
+  if (!had) {
+    hueBase = random(0, 360);
+    hueRange = random(20, 60);
+    satBase = random(60, 90);
+    briBase = random(85, 100);
+  }
   setShakeThreshold(SHAKE_THRESHOLD);
 
   shareSetup({
@@ -64,7 +75,7 @@ function setup() {
     room: ROOM,
     app: APP_NAME,
     shared: {},
-    me: { traits: { asymmetry, sizeGrowth, glowGrowth, colourGrowth } }
+    me: { traits: { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase, hueRange, satBase, briBase } }
   });
 
   enablePermissionsTap(['gyro', 'share'], 'Tap to enable motion and join the room');
@@ -108,12 +119,18 @@ function draw() {
   const t = frameCount * IDLE_SPEED;
   const pulse = 1 + 0.03 * sin(frameCount * 0.02);
 
+  // Drift palette slowly
+  hueBase = (hueBase + DRIFT_SPEED * 360) % 360;
+  const hueNow = (hueBase + noise(frameCount * 0.001) * hueRange - hueRange / 2 + 360) % 360;
+  const satNow = constrain(satBase + colourGrowth * 10, 0, 100);
+  const briNow = constrain(briBase + burst * 10, 0, 100);
+
   // Glow
   const glowAlpha = 18 + glowGrowth * 120 + burst * 80;
   noStroke();
-  fill(90, 200 + colourGrowth * 40, 255, constrain(glowAlpha * 0.6, 0, 80));
+  fill((hueNow + 180) % 360, satNow * 0.6, briNow, constrain(glowAlpha * 0.6, 0, 80));
   circle(cx, cy, baseR * 1.8 * pulse * 2);
-  fill(110, 215 + colourGrowth * 30, 255, constrain(glowAlpha, 0, 120));
+  fill((hueNow + 200) % 360, satNow * 0.7, briNow, constrain(glowAlpha, 0, 120));
   circle(cx, cy, baseR * 1.4 * pulse * 2);
 
   // Breathing noisy blob body with asymmetry (smooth radii)
@@ -125,7 +142,6 @@ function draw() {
     r *= 1 + asymmetry * 0.15 * sin(a);
     radii.push(r);
   }
-  // Smooth radii (wraparound average of neighbours)
   for (let pass = 0; pass < 2; pass++) {
     const prev = radii.slice();
     for (let i = 0; i < BODY_POINTS; i++) {
@@ -135,7 +151,7 @@ function draw() {
       radii[i] = (a + b * 2 + c) / 4;
     }
   }
-  fill(160 + colourGrowth * 60, 235, 255, 220);
+  fill(hueNow, satNow, briNow, 220);
   noStroke();
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
