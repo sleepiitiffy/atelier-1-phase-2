@@ -4,7 +4,7 @@ const ROOM = 'traces-of-light';
 const APP_NAME = 'traces-of-light';
 
 const CREATURE_SCALE = 0.2; // body radius as a fraction of min(width, height)
-const BODY_POINTS = 160;     // points around the body (higher = smoother)
+const BODY_POINTS = 90;      // points around the body (higher = smoother)
 const IDLE_SPEED = 0.006;    // how fast the body drifts and breathe
 const REACTION_STRENGTH = 1.2; // how much a touch pushes the blob
 const SETTLE_SPEED = 0.08;     // how fast the wobble settles back (0..1)
@@ -146,43 +146,54 @@ function draw() {
   const radii = [];
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
-    const n = noise(cos(a) * 1.4 + t, sin(a) * 1.4 + t);
-    let r = baseR * pulse * (0.82 + 0.3 * n) + disp[i];
-    r *= 1 + asymmetry * 0.15 * sin(a);
+    const n = noise(cos(a) * 2.2 + t * 1.5, sin(a) * 2.2 + t * 1.5);
+    let r = baseR * pulse * (0.65 + 0.55 * n) + disp[i];
+    r *= 1 + asymmetry * 0.35 * sin(a * 1.3 + t * 10) + 0.12 * sin(a * 2.7 + t * 20);
     radii.push(r);
   }
-  for (let pass = 0; pass < 2; pass++) {
+  for (let pass = 0; pass < 1; pass++) {
     const prev = radii.slice();
     for (let i = 0; i < BODY_POINTS; i++) {
       const a = prev[(i - 1 + BODY_POINTS) % BODY_POINTS];
       const b = prev[i];
       const c = prev[(i + 1) % BODY_POINTS];
-      radii[i] = (a + b * 2 + c) / 4;
+      radii[i] = (a + b + c) / 3;
     }
   }
   // Layered translucent blobs for fluid look
-  fill((hueNow + 10) % 360, satNow * 0.5, briNow * 0.9, 90);
+  fill((hueNow + 10) % 360, satNow * 0.5, briNow * 0.9, 70);
   noStroke();
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
-    vertex(cx + cos(a) * radii[i] + 8, cy + sin(a) * radii[i] - 6);
+    vertex(cx + cos(a) * radii[i] + 10, cy + sin(a) * radii[i] - 8);
   }
   endShape(CLOSE);
-  fill(hueNow, satNow * 0.55, briNow, 140);
+  fill(hueNow, satNow * 0.55, briNow, 120);
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
-    vertex(cx + cos(a) * radii[i] - 5, cy + sin(a) * radii[i] + 4);
+    vertex(cx + cos(a) * radii[i] - 6, cy + sin(a) * radii[i] + 5);
   }
   endShape(CLOSE);
-  fill((hueNow - 10 + 360) % 360, satNow * 0.45, briNow + 5, 120);
+  fill((hueNow - 10 + 360) % 360, satNow * 0.45, briNow + 5, 100);
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
     vertex(cx + cos(a) * radii[i], cy + sin(a) * radii[i]);
   }
   endShape(CLOSE);
+
+  // Whimsical floating blobs orbiting slowly
+  for (let k = 0; k < 3; k++) {
+    const ang = frameCount * (0.3 + k * 0.15) + k * 120;
+    const orbitR = baseR * (1.4 + 0.2 * sin(frameCount * 0.02 + k));
+    const sx = cx + cos(ang) * orbitR;
+    const sy = cy + sin(ang) * orbitR * 0.7;
+    const sr = baseR * (0.12 + 0.04 * sin(frameCount * 0.03 + k));
+    fill((hueNow + 40 + k * 30) % 360, satNow * 0.4, briNow, 50);
+    circle(sx, sy, sr * 2);
+  }
 
   // Soft internal features (subtle, not virus-like)
   for (const f of features) {
