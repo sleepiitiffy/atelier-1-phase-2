@@ -9,11 +9,19 @@ const JOIN_URL = 'https://sleepiitiffy.github.io/atelier-1-phase-2/';
 
 const CREATURE_SCALE = 0.2;
 const BODY_POINTS = 90;
-const IDLE_SPEED = 0.006;
-const REACTION_STRENGTH = 2.6;  // how far a touch deforms the body
-const SETTLE_SPEED = 0.05;      // lower = wobble lasts longer
-const TOUCH_FLASH = 0.7;        // brightness kick on touch
-const DRAG_LURCH = 0.06;        // how much a drag shoves the whole creature
+const IDLE_SPEED = 0.004;       // slower idle breathing
+const REACTION_STRENGTH = 1.8;  // how far a touch deforms the body
+const SETTLE_SPEED = 0.07;      // lower = wobble lasts longer
+const TOUCH_FLASH = 0.5;        // brightness kick on touch
+const DRAG_LURCH = 0.04;        // how much a drag shoves the whole creature
+const LOBE_GROWTH = 0.02;       // permanent bump added by a touch
+const LOBE_WIDTH = 46;          // angular width of that bump (degrees)
+const LOBE_MAX = 0.22;          // cap on a single bump
+const PINCH_GROWTH = 0.0012;    // size change per pixel of pinch
+const PINCH_MIN = 0.7;          // smallest a pinch can make the creature
+const PINCH_MAX = 1.25;         // largest a pull can make the creature
+const SHRINK_DELAY = 4000;      // ms of no interaction before it eases back
+const SHRINK_SPEED = 0.002;     // gentle easing back to starting size
 const TILT_FORCE = 0.15;
 const TILT_GROWTH = 0.0004;
 const SHAKE_THRESHOLD = 25;
@@ -50,6 +58,8 @@ let hueBase = 30, satBase = 25, briBase = 75;
 let features = [];
 let specks = [], ribs = [], checkers = [], shards = [], clusters = [];
 let ripples = [];
+let pinchDist = 0;
+let lastInteraction = 0;
 
 // Generate the texture once, deterministically, so it stays put frame to frame.
 function buildTexture() {
@@ -120,7 +130,7 @@ function loadState() {
 function featuresToArray() {
   const arr = [];
   for (const f of features) {
-    const code = f.type === 'tendril' ? 0 : f.type === 'pearl' ? 1 : 2;
+    const code = f.type === 'tendril' ? 0 : f.type === 'pearl' ? 1 : f.type === 'membrane' ? 2 : 3;
     arr.push(code, Math.round(f.angle * 10) / 10, Math.round((f.growth || 0) * 100) / 100);
   }
   return arr;
@@ -131,7 +141,7 @@ function featuresFromArray(arr) {
   const out = [];
   for (let i = 0; i + 2 < arr.length; i += 3) {
     out.push({
-      type: arr[i] === 0 ? 'tendril' : arr[i] === 1 ? 'pearl' : 'membrane',
+      type: arr[i] === 0 ? 'tendril' : arr[i] === 1 ? 'pearl' : arr[i] === 2 ? 'membrane' : 'lobe',
       angle: arr[i + 1],
       growth: arr[i + 2]
     });
@@ -290,14 +300,23 @@ function drawTexture(cx, cy, baseR, radii, h, s, b) {
 function drawCreature(cx, cy, baseR, h, s, b, pulse, asym, tOffset, feats) {
   const t = (frameCount + tOffset) * IDLE_SPEED;
   const radii = [];
+  const lobes = (feats || []).filter(f => f.type === 'lobe');
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
     const n = noise(cos(a) * 2.2 + t * 1.5, sin(a) * 2.2 + t * 1.5);
-    let r = baseR * pulse * (0.65 + 0.55 * n);
-    r *= 1 + asym * 0.35 * sin(a * 1.3 + t * 10) + 0.12 * sin(a * 2.7 + t * 20);
+    let r = baseR * pulse * (0.72 + 0.4 * n);
+    r *= 1 + asym * 0.18 * sin(a * 1.3 + t * 5) + 0.035 * sin(a * 2.7 + t * 8);
+    // Permanent lobes grown by touch, as smooth bumps.
+    for (const L of lobes) {
+      let da = abs(a - (L.angle % 360 + 360) % 360);
+      if (da > 180) da = 360 - da;
+      if (da < LOBE_WIDTH) {
+        r += baseR * (L.growth || 0) * 0.35 * (1 + cos(PI * da / LOBE_WIDTH));
+      }
+    }
     radii.push(r);
   }
-  for (let pass = 0; pass < 1; pass++) {
+  for (let pass = 0; pass < 3; pass++) {
     const prev = radii.slice();
     for (let i = 0; i < BODY_POINTS; i++) {
       const a = prev[(i - 1 + BODY_POINTS) % BODY_POINTS];
@@ -311,21 +330,21 @@ function drawCreature(cx, cy, baseR, h, s, b, pulse, asym, tOffset, feats) {
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
-    vertex(cx + cos(a) * radii[i] + 6, cy + sin(a) * radii[i] - 4);
+    splineVertex(cx + cos(a) * radii[i] + 6, cy + sin(a) * radii[i] - 4);
   }
   endShape(CLOSE);
   fill(h, s * 0.55, b, 120);
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
-    vertex(cx + cos(a) * radii[i] - 4, cy + sin(a) * radii[i] + 3);
+    splineVertex(cx + cos(a) * radii[i] - 4, cy + sin(a) * radii[i] + 3);
   }
   endShape(CLOSE);
   fill((h - 10 + 360) % 360, s * 0.45, b + 5, 100);
   beginShape();
   for (let i = 0; i < BODY_POINTS; i++) {
     const a = map(i, 0, BODY_POINTS, 0, 360);
-    vertex(cx + cos(a) * radii[i], cy + sin(a) * radii[i]);
+    splineVertex(cx + cos(a) * radii[i], cy + sin(a) * radii[i]);
   }
   endShape(CLOSE);
 
@@ -419,6 +438,10 @@ function draw() {
   driftY = constrain(driftY, -maxDrift, maxDrift);
   for (let i = 0; i < BODY_POINTS; i++) disp[i] = lerp(disp[i], 0, SETTLE_SPEED);
   burst *= 0.92;
+  // After a quiet period, drift gently back to the starting size.
+  if (millis() - lastInteraction > SHRINK_DELAY && abs(sizeGrowth - 1) > 0.001) {
+    sizeGrowth = lerp(sizeGrowth, 1, SHRINK_SPEED);
+  }
   if (millis() - lastSave > SAVE_INTERVAL) { saveState(); lastSave = millis(); }
 
   const cx = width / 2 + driftX, cy = height / 2 + driftY;
@@ -452,6 +475,7 @@ function draw() {
 }
 
 function deviceShaken() {
+  lastInteraction = millis();
   burst = 1;
   glowGrowth = min(1, glowGrowth + SHAKE_GROWTH);
   colourGrowth = min(1, colourGrowth + SHAKE_GROWTH * 0.8);
@@ -484,6 +508,31 @@ function growPearlNear(tx, ty) {
   const ang = (atan2(ty - cy, tx - cx) + 360) % 360;
   if (features.length < MAX_FEATURES) {
     features.push({ type: 'pearl', angle: (ang + random(-6, 6) + 360) % 360, growth: 0.3 });
+  }
+}
+
+// Touch permanently reshapes the body by growing a smooth lobe at that angle.
+function growLobeNear(tx, ty) {
+  const cx = width / 2 + driftX;
+  const cy = height / 2 + driftY;
+  const ang = (atan2(ty - cy, tx - cx) + 360) % 360;
+  let best = -1, bestD = 999;
+  for (let i = 0; i < features.length; i++) {
+    if (features[i].type !== 'lobe') continue;
+    let d = abs(features[i].angle - ang);
+    if (d > 180) d = 360 - d;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  if (best >= 0 && bestD < LOBE_WIDTH) {
+    features[best].growth = min(LOBE_MAX, features[best].growth + LOBE_GROWTH);
+  } else {
+    if (features.length >= MAX_FEATURES) {
+      // Make room by dropping the oldest non-lobe feature.
+      const old = features.findIndex(f => f.type !== 'lobe');
+      if (old >= 0) features.splice(old, 1);
+      else return;
+    }
+    features.push({ type: 'lobe', angle: ang, growth: LOBE_GROWTH });
   }
 }
 
@@ -535,32 +584,59 @@ function shareHostChanged(isHost) {
   lastSave = 0;
 }
 
+function twoFingerDist() {
+  if (!touches || touches.length < 2) return 0;
+  return dist(touches[0].x, touches[0].y, touches[1].x, touches[1].y);
+}
+
 function mousePressed() {
-  if (touches && touches.length > 0) {
-    for (const t of touches) { applyTouchReaction(t.x, t.y, 1); growPearlNear(t.x, t.y); }
+  lastInteraction = millis();
+  if (touches && touches.length >= 2) {
+    pinchDist = twoFingerDist();
+  } else if (touches && touches.length === 1) {
+    applyTouchReaction(touches[0].x, touches[0].y, 1);
+    growPearlNear(touches[0].x, touches[0].y);
+    growLobeNear(touches[0].x, touches[0].y);
   } else {
     applyTouchReaction(mouseX, mouseY, 1);
     growPearlNear(mouseX, mouseY);
+    growLobeNear(mouseX, mouseY);
   }
   return false;
 }
 
 function mouseDragged() {
+  lastInteraction = millis();
+  if (touches && touches.length >= 2) {
+    const d = twoFingerDist();
+    if (pinchDist > 0) {
+      const delta = d - pinchDist;
+      sizeGrowth = constrain(sizeGrowth + delta * PINCH_GROWTH, PINCH_MIN, PINCH_MAX);
+      burst = max(burst, 0.3);
+    }
+    pinchDist = d;
+    return false;
+  }
+  pinchDist = 0;
   const dx = mouseX - pmouseX;
   const dy = mouseY - pmouseY;
   velX += dx * DRAG_LURCH;
   velY += dy * DRAG_LURCH;
-  if (touches && touches.length > 0) {
-    for (const t of touches) { applyTouchReaction(t.x, t.y, 0.9); growTendrilNear(t.x, t.y); }
+  if (touches && touches.length === 1) {
+    applyTouchReaction(touches[0].x, touches[0].y, 0.9);
+    growTendrilNear(touches[0].x, touches[0].y);
+    growLobeNear(touches[0].x, touches[0].y);
   } else {
     applyTouchReaction(mouseX, mouseY, 0.9);
     growTendrilNear(mouseX, mouseY);
+    growLobeNear(mouseX, mouseY);
   }
   asymmetry = min(0.8, asymmetry + GROWTH_RATE * 0.6);
   return false;
 }
 
 function mouseReleased() {
+  pinchDist = 0;
   keepScreenOn();
   return false;
 }
