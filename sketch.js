@@ -11,7 +11,7 @@ const CREATURE_SCALE = 0.2;
 const BODY_POINTS = 90;
 const IDLE_SPEED = 0.004;       // slower idle breathing
 const REACTION_STRENGTH = 1.8;  // how far a touch deforms the body
-const SETTLE_SPEED = 0.07;      // lower = wobble lasts longer
+const SETTLE_SPEED = 0.035;     // lower = wobble lasts longer
 const TOUCH_FLASH = 0.5;        // brightness kick on touch
 const DRAG_LURCH = 0.04;        // how much a drag shoves the whole creature
 const LOBE_GROWTH = 0.02;       // permanent bump added by a touch
@@ -22,9 +22,10 @@ const PINCH_MIN = 0.7;          // smallest a pinch can make the creature
 const PINCH_MAX = 1.25;         // largest a pull can make the creature
 const SHRINK_DELAY = 4000;      // ms of no interaction before it eases back
 const SHRINK_SPEED = 0.002;     // gentle easing back to starting size
-const TAP_PULSE_SPEED = 2.2;    // how fast the tap wave travels across the body
-const TAP_PULSE_SIZE = 0.16;    // height of the tap wave
-const TAP_HUE_SHIFT = 8;        // hue nudge per tap
+const TAP_PULSE_SPEED = 1.1;    // how fast the tap wave travels across the body
+const TAP_PULSE_SIZE = 0.13;    // height of the tap wave
+const TAP_PULSE_FADE = 0.975;   // slower fade = longer jello (0..1)
+const TAP_HUE_SHIFT = 2;        // hue nudge per tap
 const TILT_FORCE = 0.15;
 const TILT_GROWTH = 0.0004;
 const SHAKE_THRESHOLD = 25;
@@ -584,8 +585,8 @@ function applyTouchReaction(tx, ty, strength, pull) {
 function updateTapPulses() {
   for (let i = tapPulses.length - 1; i >= 0; i--) {
     const tp = tapPulses[i];
-    tp.radius += TAP_PULSE_SPEED * 0.01;
-    tp.life *= 0.95;
+    tp.radius += TAP_PULSE_SPEED * 0.006;
+    tp.life *= TAP_PULSE_FADE;
     if (tp.radius > 1 || tp.life < 0.05) tapPulses.splice(i, 1);
   }
 }
