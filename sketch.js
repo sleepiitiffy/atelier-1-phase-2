@@ -159,7 +159,7 @@ function saveState() {
   try {
     const s = { asymmetry, sizeGrowth, glowGrowth, colourGrowth, hueBase, satBase, briBase, features };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-    if (window.shareConnected && typeof shareSetMe === 'function') {
+    if (window.shareConnected && !window.shareIsHost && typeof shareSetMe === 'function') {
       shareSetMe('traits', {
         hueBase, satBase, briBase, sizeGrowth, asymmetry, glowGrowth, colourGrowth
       });
@@ -320,13 +320,15 @@ function drawCreature(cx, cy, baseR, h, s, b, pulse, asym, tOffset, feats) {
         r += baseR * (L.growth || 0) * 0.35 * (1 + cos(PI * da / LOBE_WIDTH));
       }
     }
-    // Tap waves travelling from the tap angle across the whole body.
-    for (const tp of tapPulses) {
-      let da = abs(a - tp.angle);
-      if (da > 180) da = 360 - da;
-      const wave = 1 - abs(da - tp.radius * 360) / 40;
-      if (wave > 0) {
-        r += baseR * TAP_PULSE_SIZE * tp.life * wave;
+    // Tap waves are a participant-only effect; the host view is read-only.
+    if (!window.shareIsHost) {
+      for (const tp of tapPulses) {
+        let da = abs(a - tp.angle);
+        if (da > 180) da = 360 - da;
+        const wave = 1 - abs(da - tp.radius * 360) / 40;
+        if (wave > 0) {
+          r += baseR * TAP_PULSE_SIZE * tp.life * wave;
+        }
       }
     }
     radii.push(r);
@@ -394,11 +396,16 @@ function draw() {
   background(0);
 
   if (window.shareIsHost) {
+    // Host is read-only: the big creature is purely the average of the guests.
     const guests = (window.guests || []).slice(0, MAX_SATELLITES);
-    const sources = [{ h: hueBase, s: satBase, b: briBase, sg: sizeGrowth, asym: asymmetry, feats: features }];
+    const sources = [];
     for (const g of guests) {
       const snap = readGuest(g);
       if (snap) sources.push(snap);
+    }
+    if (sources.length === 0) {
+      // Neutral resting state while nobody is connected.
+      sources.push({ h: hueBase, s: satBase, b: briBase, sg: 1, asym: 0, feats: [] });
     }
     let hx = 0, hy = 0;
     for (const src of sources) { hx += cos(src.h); hy += sin(src.h); }
@@ -491,6 +498,7 @@ function draw() {
 }
 
 function deviceShaken() {
+  if (window.shareIsHost) return;
   lastInteraction = millis();
   burst = 1;
   glowGrowth = min(1, glowGrowth + SHAKE_GROWTH);
@@ -620,6 +628,7 @@ function twoFingerDist() {
 }
 
 function mousePressed() {
+  if (window.shareIsHost) return false; // host view is read-only
   lastInteraction = millis();
   lastDragX = null; lastDragY = null;
   if (touches && touches.length >= 2) {
@@ -644,6 +653,7 @@ function spawnTap(x, y) {
 }
 
 function mouseDragged() {
+  if (window.shareIsHost) return false;
   lastInteraction = millis();
   if (touches && touches.length >= 2) {
     const d = twoFingerDist();
@@ -685,11 +695,13 @@ function mouseDragged() {
 function mouseReleased() {
   pinchDist = 0;
   lastDragX = null; lastDragY = null;
-  keepScreenOn();
+  keepScreenOn(); // still keep the iPad screen on
+  if (window.shareIsHost) return false;
   return false;
 }
 
 function keyPressed() {
+  if (window.shareIsHost) return false;
   if (!window.sensorsEnabled) {
     if (keyCode === LEFT_ARROW) velX -= KEY_TILT_FORCE;
     if (keyCode === RIGHT_ARROW) velX += KEY_TILT_FORCE;
